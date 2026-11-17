@@ -66,6 +66,8 @@ button,select{font-family:inherit;font-size:inherit}
 .health .dot{width:14px;height:14px;border-radius:50%;background:var(--line);flex:none}
 .health .dot.on{background:var(--green)} .health .dot.risk{background:var(--orange)} .health .dot.off{background:var(--red)}
 
+.hbadge{border:2px solid var(--navy);border-radius:8px;padding:7px 14px;background:#fff;color:var(--navy);font-weight:600}
+
 /* Tabs + toolbar */
 .tabs{display:flex;gap:6px;margin-top:22px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .tab{appearance:none;border:0;background:none;padding:12px 18px;font-weight:600;color:var(--gray);cursor:pointer;border-bottom:4px solid transparent;margin-bottom:-1px}
@@ -211,6 +213,7 @@ tr.phase td{background:var(--tint);border-bottom:2px solid var(--navy);padding:0
 .phtoggle[aria-expanded="true"] .car{transform:rotate(90deg)}
 .phtoggle .cnt{font-weight:500;color:var(--gray);font-size:.82rem}
 .empty{padding:40px 12px;text-align:center;color:var(--gray)}
+.ftr:empty{display:none}
 .ftr{margin:28px 0 36px;padding-top:14px;border-top:1px solid var(--line);color:var(--gray);font-size:.8rem;display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center}
 
 /* Refresh panel */
@@ -304,6 +307,17 @@ var STATUS = {
    Resolved = Deferred, Closed (Wrike: Canceled), Completed. */
 var OPEN = {NS:1,IP:1,OD:1,OH:1};
 var RESOLVED = {DF:1,CP:1,CX:1};
+/* EDITOR / PRODUCTION MODE
+   In the Claude artifact the page is an editor: Project Health can be changed and the Refresh and
+   "Copy production code" buttons show. The production file ("Copy production code") sets this flag to false,
+   bakes in the chosen Project Health, and is view-only. Even if the flag is left true, the editor tools stay
+   hidden unless the page is running inside Claude (framed, or served from a claude/anthropic host). */
+var EDIT_FLAG = true;
+var IS_EDITOR = (function(){
+  if(!EDIT_FLAG) return false;
+  var framed=false; try{framed=window.self!==window.top;}catch(e){framed=true;}
+  return framed || /claude|anthropic/i.test(location.hostname||'');
+})();
 var NP = 'Not provided';
 var REFRESH_REQUEST = 'Refresh the Seaboard client portal from Wrike (Seaboard folder 4350217890: Implementation Schedule + Launch Log) the Seaboard meetings scheduled this week from my Outlook calendar, the latest email threads (only threads that include seaboard@shipdlx.com AND at least one Seaboard Foods representative at seaboardfoods.com on the chain), and the latest Seaboard Daily Operations Teams chat messages, using the same rules as before, and give me the full updated file.';
 var coll = new Intl.Collator('en',{numeric:true,sensitivity:'base'});
@@ -519,9 +533,8 @@ function renderTabs(){
     return '<button type="button" class="stab" data-view="'+v.k+'" aria-pressed="'+(state.tab===v.k)+'">'+v.label+'<span class="n">'+n[v.k]+'</span></button>';}).join(''):'';
 }
 function renderFooter(){
-  $('footer').innerHTML='<span>Source: Wrike, DLX calendar, Outlook and Teams &middot; Data pulled '+esc(fmtDay(DATA.meta.pulledAt))+'</span>'+
-    '<span>Update times shown in Central Time.</span>'+
-    '<span class="spacer"></span><button type="button" class="btn" data-act="refresh">Refresh data <span class="kbd">R</span></button>';
+  $('footer').innerHTML=
+    (IS_EDITOR?'<span class="spacer"></span><button type="button" class="btn" data-act="refresh">Refresh data <span class="kbd">R</span></button><button type="button" class="btn primary" data-act="prod">Copy production code</button>':'');
 }
 function sortedPhases(){return model.impl.slice().sort(function(a,b){return coll.compare(clean(a.name),clean(b.name));});}
 function hm12(t){var m=/^(\d{1,2}):(\d{2})/.exec(t||'');if(!m) return t||'';var h=+m[1],ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+m[2]+' '+ap;}
@@ -634,10 +647,12 @@ function render(){
 
 /* ---------- Project Health ---------- */
 function setHealth(v,save){
-  $('health').value=v;
+  var sel=$('health'); if(sel) sel.value=v;
+  var tx=$('healthText'); if(tx) tx.textContent=v||'Not set';
   var d=$('healthDot'); d.className='dot'+(v==='On Track'?' on':v==='At Risk'?' risk':v==='Off Track'?' off':'');
-  if(save){try{localStorage.setItem('sf-portal-health',v);}catch(e){}}
+  if(save&&IS_EDITOR){try{localStorage.setItem('sf-portal-health',v);}catch(e){}}
 }
+function currentHealth(){var sel=$('health');return sel?sel.value:((DATA.meta&&DATA.meta.health)||'');}
 
 /* ---------- Refresh panel (press R) ---------- */
 var pending=null;
@@ -666,9 +681,9 @@ function openRefresh(){
    '<p>Paste the data block from Claude here. It stays in this browser tab only.</p>'+
    '<textarea id="pasteBox" spellcheck="false" placeholder="Paste the new WRIKE-DATA block (JSON) here"></textarea>'+
    '<div class="acts"><button type="button" class="btn" data-act="apply">Preview this data</button></div><div class="msg" id="m2"></div>'+
-   '<div class="stp">3. Copy the updated file for GitHub</div>'+
-   '<p>Builds this page&rsquo;s file with only the data block replaced, ready to paste into GitHub.</p>'+
-   '<div class="acts"><button type="button" class="btn primary" data-act="copyfile">Copy updated file</button>'+
+   '<div class="stp">3. Copy the production file for GitHub</div>'+
+   '<p>Builds the view-only file for GitHub: this data, the current Project Health, no Refresh button.</p>'+
+   '<div class="acts"><button type="button" class="btn primary" data-act="copyfile">Copy production code</button>'+
    '<button type="button" class="btn" data-act="copyblock">Copy data block only</button>'+
    '<span class="spacer"></span><button type="button" class="btn" data-act="close">Close <span class="kbd">Esc</span></button></div>'+
    '<div class="msg" id="m3"></div>'+
@@ -690,8 +705,51 @@ function showOut(text,okMsg,failMsg,id){
   copyText(text).then(function(){say(id,okMsg);},function(){box.focus();box.select();say(id,failMsg,true);});
 }
 function currentObj(){return pending||DATA;}
+function domSource(){
+  var c=document.documentElement.cloneNode(true);
+  ['tabs','subtabs','toolbar','chips','tableHost','footer'].forEach(function(id){var e=c.querySelector('#'+id);if(e)e.innerHTML='';});
+  var dlg=c.querySelector('#dlg');if(dlg)dlg.innerHTML='';
+  var ov=c.querySelector('#ov');if(ov)ov.className='ov';
+  var hd=c.querySelector('#healthDot');if(hd)hd.className='dot';
+  return '<!DOCTYPE html>\n'+c.outerHTML;
+}
+function getSource(){
+  return fetch(location.href.split('#')[0],{cache:'no-store'}).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);return r.text();
+  }).then(function(t){if(t.indexOf('WRIKE-DATA-START')<0) throw new Error('no markers');return t;})
+  .catch(function(){return domSource();});
+}
+function makeProduction(obj){
+  return getSource().then(function(src){
+    var re=/<!-- WRIKE-DATA-START -->[\s\S]*?<!-- WRIKE-DATA-END -->/;
+    if(!re.test(src)) throw new Error('markers not found');
+    var o=JSON.parse(JSON.stringify(obj)); o.meta=o.meta||{}; o.meta.health=currentHealth();
+    var out=src.replace(re,function(){return dataBlock(o);});
+    var flag='var EDIT_FLAG = true;', i=out.indexOf(flag);
+    if(i<0) throw new Error('flag not found');
+    return out.slice(0,i)+'var EDIT_FLAG = false;'+out.slice(i+flag.length);
+  });
+}
+function openProd(){
+  var hv=currentHealth()||'Not set';
+  $('dlg').innerHTML=
+   '<h2 id="ovTitle">Production code</h2>'+
+   '<p>Builds the view-only version of this page for GitHub and Vercel. Project Health is fixed at <b>'+esc(hv)+'</b> (the current choice), and the Refresh button and R shortcut are removed.</p>'+
+   '<div class="acts"><button type="button" class="btn primary" data-act="prodcopy">Copy production code</button><span class="spacer"></span><button type="button" class="btn" data-act="close">Close <span class="kbd">Esc</span></button></div>'+
+   '<div class="msg" id="mp"></div>'+
+   '<textarea id="outBox" spellcheck="false" readonly style="display:none" aria-label="Production code"></textarea>';
+  $('ov').classList.add('open');
+}
 function doAct(act){
+  if(!IS_EDITOR&&act!=='close') return;
   if(act==='refresh') return openRefresh();
+  if(act==='prod') return openProd();
+  if(act==='prodcopy'){
+    say('mp','Building the production file...');
+    return makeProduction(DATA).then(function(out){
+      showOut(out,'Production code copied ('+Math.round(out.length/1024)+' KB). Paste it over index.html on GitHub.','Copy was blocked here. The code is selected below, press Ctrl/Cmd+C.','mp');
+    }).catch(function(){say('mp','Could not build the file from this page.',true);});
+  }
   if(act==='close') return closeRefresh();
   if(act==='expand'){sortedPhases().forEach(function(p){state.expanded[p.name]=true;});return render();}
   if(act==='collapse'){state.expanded={};return render();}
@@ -713,15 +771,10 @@ function doAct(act){
   if(act==='copyfile'){
     try{if($('pasteBox').value.trim()) pending=parsePasted();}catch(e){return say('m3',e.message,true);}
     say('m3','Building the file...');
-    return fetch(location.href.split('#')[0],{cache:'no-store'}).then(function(r){
-      if(!r.ok) throw new Error('HTTP '+r.status);return r.text();
-    }).then(function(src){
-      var re=/<!-- WRIKE-DATA-START -->[\s\S]*?<!-- WRIKE-DATA-END -->/;
-      if(!re.test(src)) throw new Error('markers not found');
-      var out=src.replace(re,function(){return dataBlock(currentObj());});
-      showOut(out,'Updated file copied ('+Math.round(out.length/1024)+' KB). Paste it over the file on GitHub.','Copy was blocked here. The file text is selected below, press Ctrl/Cmd+C.','m3');
+    return makeProduction(currentObj()).then(function(out){
+      showOut(out,'Production code copied ('+Math.round(out.length/1024)+' KB). Paste it over index.html on GitHub.','Copy was blocked here. The code is selected below, press Ctrl/Cmd+C.','m3');
     }).catch(function(){
-      say('m3','This page could not read its own source here (this happens when opened from a local file). Use "Copy data block only" and replace the block between WRIKE-DATA-START and WRIKE-DATA-END.',true);
+      say('m3','Could not build the file from this page. Use "Copy data block only" and replace the block between WRIKE-DATA-START and WRIKE-DATA-END.',true);
     });
   }
 }
@@ -778,7 +831,7 @@ document.addEventListener('keydown',function(e){
   if(e.metaKey||e.ctrlKey||e.altKey) return;
   var t=e.target, tag=t&&t.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(t&&t.isContentEditable)) return;
-  if(e.key==='r'||e.key==='R'){e.preventDefault();openRefresh();}
+  if(IS_EDITOR&&(e.key==='r'||e.key==='R')){e.preventDefault();openRefresh();}
 });
 window.addEventListener('hashchange',function(){
   var h=location.hash.replace('#','');
@@ -792,8 +845,17 @@ try{
   $('clientName').textContent=DATA.meta.client||'Seaboard Foods';
   var h0=location.hash.replace('#','');
   if(h0==='home'||h0==='launch'||h0==='schedule') state.tab=h0;
-  var saved='';try{saved=localStorage.getItem('sf-portal-health')||'';}catch(e){}
-  setHealth(DATA.meta.health||saved||'',false);
+  if(IS_EDITOR){
+    var saved='';try{saved=localStorage.getItem('sf-portal-health')||'';}catch(e){}
+    setHealth(saved||DATA.meta.health||'',false);
+  }else{
+    /* view-only: Project Health is a fixed label taken from the data block */
+    var sel=$('health'), lab=document.querySelector('.health label'), hv=DATA.meta.health||'';
+    if(lab) lab.removeAttribute('for');
+    if(sel){var tx=document.createElement('span');tx.id='healthText';tx.className='hbadge';sel.replaceWith(tx);}
+    if(!hv){var hb=document.querySelector('.health'); if(hb) hb.style.display='none';}
+    setHealth(hv,false);
+  }
   render();
 }catch(err){
   $('tableHost').innerHTML='<div class="empty">The data block could not be read. Check the WRIKE-DATA block.</div>';
